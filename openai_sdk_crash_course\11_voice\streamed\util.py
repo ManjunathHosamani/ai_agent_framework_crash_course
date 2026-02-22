@@ -45,6 +45,65 @@ class AudioPlayer:
         self._stop_event.set()
 
 
+class StreamedAudioRecorder:
+    """A streaming audio recorder that captures audio in real-time."""
+    
+    def __init__(self, sample_rate: int = 24000, channels: int = 1, dtype=np.int16, chunk_size: int = 1024):
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.dtype = dtype
+        self.chunk_size = chunk_size
+        self.stream: Optional[sd.InputStream] = None
+        self._audio_queue = []
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+    
+    def __enter__(self):
+        """Context manager entry - start the audio stream."""
+        self.stream = sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=self.channels,
+            dtype=self.dtype,
+            blocksize=self.chunk_size,
+            callback=self._audio_callback
+        )
+        self.stream.start()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - stop and close the audio stream."""
+        self._stop_event.set()
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+    
+    def _audio_callback(self, indata, frames, time, status):
+        """Callback function for audio input stream."""
+        if status:
+            print(f"[warning] Audio input status: {status}")
+        
+        with self._lock:
+            # Convert to the correct format and add to queue
+            audio_chunk = indata.copy().flatten().astype(self.dtype)
+            self._audio_queue.append(audio_chunk)
+    
+    def get_audio_chunk(self) -> Optional[np.ndarray]:
+        """Get the next available audio chunk."""
+        with self._lock:
+            if self._audio_queue:
+                return self._audio_queue.pop(0)
+            return None
+    
+    def has_audio(self) -> bool:
+        """Check if there's audio data available."""
+        with self._lock:
+            return len(self._audio_queue) > 0
+    
+    def stop(self):
+        """Stop the recorder."""
+        self._stop_event.set()
+
+
 def record_audio(
     duration: float = 5.0,
     sample_rate: int = 24000,
